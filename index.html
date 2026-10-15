@@ -1,0 +1,899 @@
+
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="theme-color" content="#111827">
+<title>God's Life - Rádio</title>
+
+<style>
+* {
+  box-sizing: border-box;
+}
+
+html, body {
+  margin: 0;
+  padding: 0;
+  width: 100%;
+  min-height: 100%;
+}
+
+body {
+  background: #111827;
+  color: #ffffff;
+  font-family: Arial, sans-serif;
+  text-align: center;
+  padding: 15px;
+}
+
+.radio {
+  width: 100%;
+  max-width: 330px;
+  margin: 15px auto;
+  padding: 22px 20px;
+  background: #1f2937;
+  border: 1px solid #374151;
+  border-radius: 16px;
+}
+
+.logo {
+  width: 95px;
+  height: 95px;
+  margin-bottom: 10px;
+  border-radius: 50%;
+  object-fit: contain;
+}
+
+h1 {
+  margin: 5px 0 12px;
+  font-size: 24px;
+}
+
+#titulo-musica {
+  min-height: 20px;
+  margin: 12px 0;
+  color: #ffffff;
+  font-size: 16px;
+  font-weight: bold;
+  overflow-wrap: break-word;
+}
+
+#relogio-brasilia {
+  margin: 12px 0 20px;
+  color: #4ade80;
+  font-size: 17px;
+  font-weight: bold;
+}
+
+#play {
+  width: 70px;
+  height: 70px;
+  margin: 5px 0 20px;
+  border: 0;
+  border-radius: 50%;
+  background: #22c55e;
+  color: #052e16;
+  font-size: 28px;
+  font-weight: bold;
+  cursor: pointer;
+}
+
+#play:disabled {
+  opacity: 0.5;
+}
+
+input[type="range"] {
+  display: block;
+  width: 100%;
+  height: 30px;
+  margin: 5px 0;
+  accent-color: #22c55e;
+  cursor: pointer;
+}
+
+.times {
+  display: flex;
+  justify-content: space-between;
+  color: #d1d5db;
+  font-size: 12px;
+}
+
+.volume {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-top: 18px;
+}
+
+.volume span {
+  font-size: 20px;
+}
+
+.volume input {
+  flex: 1;
+  min-width: 0;
+}
+
+.status {
+  min-height: 18px;
+  margin-top: 16px;
+  color: #d1d5db;
+  font-size: 13px;
+  line-height: 1.4;
+}
+
+.error {
+  color: #fca5a5;
+}
+
+button:focus,
+input:focus {
+  outline: 2px solid #4ade80;
+  outline-offset: 3px;
+}
+</style>
+</head>
+
+<body>
+
+<main class="radio">
+
+  <img
+    id="logo"
+    class="logo"
+    src="https://i.imgur.com/ZRHzLQK.jpeg"
+    alt="Logo da rádio"
+    onerror="this.style.display='none'"
+  >
+
+  <h1>God's life</h1>
+
+  <div id="titulo-musica">Minha Rádio</div>
+
+  <div id="relogio-brasilia">--:--:--</div>
+
+  <audio id="audio" preload="none"></audio>
+
+  <div>
+    <button
+      id="play"
+      type="button"
+      aria-label="Reproduzir"
+      disabled
+    >&#9654;</button>
+  </div>
+
+  <input
+    id="progress"
+    type="range"
+    min="0"
+    max="100"
+    value="0"
+    aria-label="Progresso da música"
+    disabled
+  >
+
+  <div class="times">
+    <span id="elapsed">00:00</span>
+    <span id="duration">00:00</span>
+  </div>
+
+  <div class="volume">
+    <span aria-hidden="true">&#128266;</span>
+    <input
+      id="volume"
+      type="range"
+      min="0"
+      max="100"
+      value="80"
+      aria-label="Volume"
+    >
+  </div>
+
+  <div id="status" class="status">
+    Carregando rádio...
+  </div>
+
+</main>
+
+<script>
+(function () {
+  "use strict";
+
+  var JSON_URL =
+    "https://raw.githubusercontent.com/Isac-Arqueiro/mylist/refs/heads/main/musicas.json";
+
+  var STORAGE_KEY = "radio-audio-tv-v2";
+
+  var audio = document.getElementById("audio");
+  var playBtn = document.getElementById("play");
+  var progress = document.getElementById("progress");
+  var volume = document.getElementById("volume");
+  var elapsed = document.getElementById("elapsed");
+  var duration = document.getElementById("duration");
+  var status = document.getElementById("status");
+  var tituloMusica = document.getElementById("titulo-musica");
+  var relogio = document.getElementById("relogio-brasilia");
+
+  var config = {};
+  var musicas = [];
+  var fila = [];
+  var indice = 0;
+
+  var buscando = false;
+  var tempoPendente = 0;
+  var reproduzindo = false;
+  var processandoErro = false;
+  var tentativas = 0;
+  var salvamentoDisponivel = true;
+
+  function mensagem(texto, erro) {
+    status.innerHTML = "";
+    status.appendChild(document.createTextNode(texto));
+
+    if (erro) {
+      status.className = "status error";
+    } else {
+      status.className = "status";
+    }
+  }
+
+  function tempo(segundos) {
+    if (!isFinite(segundos) || segundos < 0) {
+      return "00:00";
+    }
+
+    var n = Math.floor(segundos);
+    var minutos = Math.floor(n / 60);
+    var segundosRestantes = n % 60;
+
+    return ("0" + minutos).slice(-2) + ":" +
+      ("0" + segundosRestantes).slice(-2);
+  }
+
+  function embaralhar(lista) {
+    var resultado = lista.slice();
+    var i;
+    var j;
+    var temporario;
+
+    for (i = resultado.length - 1; i > 0; i--) {
+      j = Math.floor(Math.random() * (i + 1));
+
+      temporario = resultado[i];
+      resultado[i] = resultado[j];
+      resultado[j] = temporario;
+    }
+
+    return resultado;
+  }
+
+  function urlDeAudio(url) {
+    if (typeof url !== "string") {
+      return null;
+    }
+
+    url = url.replace(/^\s+|\s+$/g, "");
+
+    if (!/^https?:\/\//i.test(url)) {
+      return null;
+    }
+
+    var host = "";
+    var caminho = "";
+    var partes = url.match(/^https?:\/\/([^\/?#]+)([^?#]*)/i);
+
+    if (!partes) {
+      return null;
+    }
+
+    host = partes[1].toLowerCase();
+    caminho = partes[2].toLowerCase();
+
+    if (
+      host === "youtu.be" ||
+      /(^|\.)youtube\.com$/.test(host) ||
+      /(^|\.)youtube-nocookie\.com$/.test(host)
+    ) {
+      return null;
+    }
+
+    if (
+      host === "drive.google.com" ||
+      host === "docs.google.com"
+    ) {
+      var id = "";
+      var encontrado = url.match(/[?&]id=([^&#]+)/);
+
+      if (encontrado) {
+        id = encontrado[1];
+      } else {
+        encontrado = caminho.match(/\/d\/([^\/]+)/);
+
+        if (encontrado) {
+          id = encontrado[1];
+        }
+      }
+
+      if (!id) {
+        return null;
+      }
+
+      id = id.replace(/&amp;/g, "&");
+
+      return "https://drive.google.com/uc?export=download&id=" +
+        encodeURIComponent(id);
+    }
+
+    return url;
+  }
+
+  function faixaAtual() {
+    var id;
+    var i;
+
+    if (!fila.length) {
+      return null;
+    }
+
+    id = fila[indice];
+
+    for (i = 0; i < musicas.length; i++) {
+      if (String(musicas[i].id) === String(id)) {
+        return musicas[i];
+      }
+    }
+
+    return null;
+  }
+
+  function atualizarTituloMusica() {
+    var faixa = faixaAtual();
+
+    tituloMusica.textContent =
+      faixa && faixa.titulo
+        ? faixa.titulo
+        : "Minha Rádio";
+  }
+
+  function salvar() {
+    if (!salvamentoDisponivel || !fila.length) {
+      return;
+    }
+
+    try {
+      localStorage.setItem(STORAGE_KEY, JSON.stringify({
+        fila: fila,
+        indice: indice,
+        tempo: isFinite(audio.currentTime)
+          ? audio.currentTime : 0,
+        volume: Number(volume.value)
+      }));
+    } catch (e) {
+      salvamentoDisponivel = false;
+    }
+  }
+
+  function carregarSalvo() {
+    var salvo;
+    var ids = {};
+    var i;
+    var valido = true;
+
+    try {
+      salvo = JSON.parse(localStorage.getItem(STORAGE_KEY));
+    } catch (e) {
+      salvo = null;
+    }
+
+    if (!salvo || !salvo.fila ||
+        typeof salvo.fila.length !== "number") {
+      return false;
+    }
+
+    if (salvo.fila.length !== musicas.length) {
+      return false;
+    }
+
+    for (i = 0; i < musicas.length; i++) {
+      ids[String(musicas[i].id)] = true;
+    }
+
+    var usados = {};
+
+    for (i = 0; i < salvo.fila.length; i++) {
+      var chave = String(salvo.fila[i]);
+
+      if (!ids[chave] || usados[chave]) {
+        valido = false;
+        break;
+      }
+
+      usados[chave] = true;
+    }
+
+    if (!valido ||
+        Math.floor(salvo.indice) !== salvo.indice ||
+        salvo.indice < 0 ||
+        salvo.indice >= salvo.fila.length) {
+      return false;
+    }
+
+    fila = salvo.fila;
+    indice = salvo.indice;
+    tempoPendente = Math.max(0, Number(salvo.tempo) || 0);
+
+    if (salvo.volume !== undefined) {
+      volume.value = Math.max(
+        0,
+        Math.min(100, Number(salvo.volume) || 0)
+      );
+    }
+
+    return true;
+  }
+
+  function prepararFila() {
+    var primeira = null;
+    var restantes = [];
+    var i;
+
+    if (carregarSalvo()) {
+      return;
+    }
+
+    if (config.tocarPrimeiro !== undefined) {
+      for (i = 0; i < musicas.length; i++) {
+        if (
+          String(musicas[i].id) ===
+          String(config.tocarPrimeiro)
+        ) {
+          primeira = musicas[i];
+          break;
+        }
+      }
+    }
+
+    for (i = 0; i < musicas.length; i++) {
+      if (musicas[i] !== primeira) {
+        restantes.push(musicas[i].id);
+      }
+    }
+
+    fila = embaralhar(restantes);
+
+    if (primeira) {
+      fila.unshift(primeira.id);
+    }
+
+    indice = 0;
+    tempoPendente = 0;
+  }
+
+  function atualizarBotao() {
+    playBtn.innerHTML = reproduzindo ? "&#10074;&#10074;" : "&#9654;";
+    playBtn.setAttribute(
+      "aria-label",
+      reproduzindo ? "Pausar" : "Reproduzir"
+    );
+  }
+
+  function pausar() {
+    audio.pause();
+    reproduzindo = false;
+    atualizarBotao();
+    mensagem("Pausado", false);
+    salvar();
+  }
+
+  function proxima() {
+    var anterior;
+    var outras;
+    var i;
+
+    if (!fila.length || processandoErro) {
+      return;
+    }
+
+    anterior = faixaAtual();
+    indice++;
+
+    if (indice >= fila.length) {
+      outras = [];
+
+      for (i = 0; i < musicas.length; i++) {
+        if (!anterior ||
+            String(musicas[i].id) !== String(anterior.id)) {
+          outras.push(musicas[i].id);
+        }
+      }
+
+      fila = embaralhar(outras);
+
+      if (anterior) {
+        fila.push(anterior.id);
+      }
+
+      indice = 0;
+    }
+
+    tempoPendente = 0;
+    audio.pause();
+    audio.removeAttribute("src");
+    audio.removeAttribute("data-faixa");
+    audio.load();
+
+    salvar();
+    atualizarTituloMusica();
+
+    if (tentativas >= musicas.length) {
+      reproduzindo = false;
+      atualizarBotao();
+      mensagem("Não foi possível reproduzir os áudios disponíveis.", true);
+      return;
+    }
+
+    tocar();
+  }
+
+  function falhaNaFaixa() {
+    if (processandoErro) {
+      return;
+    }
+
+    processandoErro = true;
+    tentativas++;
+
+    reproduzindo = false;
+    atualizarBotao();
+
+    mensagem("Áudio indisponível. Tentando a próxima faixa...", true);
+
+    if (tentativas >= musicas.length) {
+      mensagem("Nenhum áudio pôde ser reproduzido.", true);
+      processandoErro = false;
+      return;
+    }
+
+    window.setTimeout(function () {
+      processandoErro = false;
+      proxima();
+    }, 300);
+  }
+
+  function tocar() {
+    var faixa = faixaAtual();
+    var resultado;
+
+    if (!faixa || processandoErro) {
+      return;
+    }
+
+    atualizarTituloMusica();
+
+    if (audio.getAttribute("data-faixa") !== String(faixa.id)) {
+      audio.pause();
+
+      audio.setAttribute("data-faixa", String(faixa.id));
+      audio.src = faixa.audioUrl;
+      audio.load();
+
+      if (tempoPendente > 0) {
+        audio.addEventListener("loadedmetadata", function restaurar() {
+          if (tempoPendente > 0 && isFinite(audio.duration)) {
+            try {
+              audio.currentTime = Math.min(
+                tempoPendente,
+                Math.max(0, audio.duration - 1)
+              );
+            } catch (e) {}
+
+            tempoPendente = 0;
+          }
+        });
+      }
+    }
+
+    try {
+      resultado = audio.play();
+
+      if (resultado && typeof resultado.then === "function") {
+        resultado.then(function () {
+          reproduzindo = true;
+          tentativas = 0;
+          processandoErro = false;
+          atualizarBotao();
+          mensagem("Reproduzindo", false);
+          salvar();
+        }, function () {
+          falhaNaFaixa();
+        });
+      } else {
+        reproduzindo = true;
+        tentativas = 0;
+        atualizarBotao();
+        mensagem("Reproduzindo", false);
+      }
+    } catch (e) {
+      falhaNaFaixa();
+    }
+  }
+
+  playBtn.onclick = function () {
+    if (reproduzindo) {
+      pausar();
+    } else {
+      tocar();
+    }
+  };
+
+  audio.addEventListener("play", function () {
+    reproduzindo = true;
+    atualizarBotao();
+  });
+
+  audio.addEventListener("pause", function () {
+    reproduzindo = false;
+    atualizarBotao();
+    salvar();
+  });
+
+  audio.addEventListener("ended", function () {
+    tentativas = 0;
+    proxima();
+  });
+
+  audio.addEventListener("error", function () {
+    if (audio.getAttribute("data-faixa")) {
+      falhaNaFaixa();
+    }
+  });
+
+  audio.addEventListener("loadedmetadata", function () {
+    duration.textContent = tempo(audio.duration);
+    progress.disabled = false;
+  });
+
+  audio.addEventListener("timeupdate", function () {
+    elapsed.textContent = tempo(audio.currentTime);
+    duration.textContent = tempo(audio.duration);
+
+    if (!buscando && isFinite(audio.duration) &&
+        audio.duration > 0) {
+      progress.value =
+        (audio.currentTime / audio.duration) * 100;
+    }
+  });
+
+  progress.addEventListener("input", function () {
+    buscando = true;
+  });
+
+  progress.addEventListener("change", function () {
+    if (isFinite(audio.duration) && audio.duration > 0) {
+      audio.currentTime =
+        Number(progress.value) * audio.duration / 100;
+    }
+
+    buscando = false;
+    salvar();
+  });
+
+  volume.addEventListener("input", function () {
+    audio.volume = Number(volume.value) / 100;
+    salvar();
+  });
+
+  function atualizarRelogio() {
+    var agora = new Date();
+
+    try {
+      relogio.textContent =
+        new Intl.DateTimeFormat("pt-BR", {
+          timeZone: "America/Sao_Paulo",
+          hour: "2-digit",
+          minute: "2-digit",
+          second: "2-digit",
+          hour12: false
+        }).format(agora);
+    } catch (e) {
+      relogio.textContent =
+        ("0" + agora.getHours()).slice(-2) + ":" +
+        ("0" + agora.getMinutes()).slice(-2) + ":" +
+        ("0" + agora.getSeconds()).slice(-2);
+    }
+  }
+
+  function iniciar() {
+    var xhr = new XMLHttpRequest();
+
+    xhr.open("GET", JSON_URL, true);
+    xhr.timeout = 15000;
+
+    xhr.onreadystatechange = function () {
+      var dados;
+      var lista;
+      var i;
+      var musica;
+      var audioUrl;
+
+      if (xhr.readyState !== 4) {
+        return;
+      }
+
+      if (xhr.status < 200 || xhr.status >= 300) {
+        mensagem("Erro ao carregar a lista de músicas.", true);
+        return;
+      }
+
+      try {
+        dados = JSON.parse(xhr.responseText);
+      } catch (e) {
+        mensagem("A lista de músicas está inválida.", true);
+        return;
+      }
+
+      config = dados.configuracao || {};
+      lista = dados.musicas || [];
+
+      if (!(lista instanceof Array)) {
+        lista = [];
+      }
+
+      musicas = [];
+
+      for (i = 0; i < lista.length; i++) {
+        musica = lista[i];
+
+        if (!musica || musica.id === undefined || !musica.url) {
+          continue;
+        }
+
+        audioUrl = urlDeAudio(musica.url);
+
+        if (audioUrl) {
+          musicas.push({
+            id: musica.id,
+            titulo: musica.titulo || "Minha Rádio",
+            audioUrl: audioUrl
+          });
+        }
+      }
+
+      if (!musicas.length) {
+        mensagem("Nenhum link de áudio compatível foi encontrado.", true);
+        return;
+      }
+
+      prepararFila();
+
+      audio.volume = Number(volume.value) / 100;
+
+      atualizarTituloMusica();
+      atualizarBotao();
+
+      playBtn.disabled = false;
+
+      mensagem("Rádio pronta. Pressione reproduzir.", false);
+      salvar();
+    };
+
+    xhr.onerror = function () {
+      mensagem("Falha de conexão ao carregar a rádio.", true);
+    };
+
+    xhr.ontimeout = function () {
+      mensagem("Tempo esgotado ao carregar a rádio.", true);
+    };
+
+    try {
+      xhr.send(null);
+    } catch (e) {
+      mensagem("Não foi possível acessar a lista de músicas.", true);
+    }
+  }
+
+  atualizarRelogio();
+  window.setInterval(atualizarRelogio, 1000);
+
+  window.setInterval(salvar, 10000);
+  window.addEventListener("pagehide", salvar);
+
+  iniciar();
+
+}());
+</script>
+<style>
+#btnInstall {
+  position: fixed;
+  bottom: 20px;
+  right: 20px;
+  z-index: 9999;
+
+  border: none;
+  border-radius: 50px;
+  padding: 14px 20px;
+
+  background: #000;
+  color: #fff;
+
+  font-size: 16px;
+  font-weight: bold;
+
+  box-shadow: 0 4px 12px rgba(0,0,0,.3);
+
+  cursor: pointer;
+
+  display: none;
+
+  transition: all .3s ease;
+}
+
+#btnInstall:hover {
+  transform: scale(1.05);
+}
+</style>
+
+<button id="btnInstall">📲 Instalar App</button>
+
+<script>
+let deferredPrompt;
+
+const btnInstall = document.getElementById("btnInstall");
+
+// Verifica se já está instalado
+function isAppInstalled() {
+  return window.matchMedia('(display-mode: standalone)').matches
+    || window.navigator.standalone === true;
+}
+
+// Se não estiver instalado
+if (!isAppInstalled()) {
+
+  window.addEventListener("beforeinstallprompt", (e) => {
+
+    e.preventDefault();
+
+    deferredPrompt = e;
+
+    btnInstall.style.display = "block";
+  });
+
+}
+
+// Clique no botão
+btnInstall.addEventListener("click", async () => {
+
+  if (!deferredPrompt) return;
+
+  deferredPrompt.prompt();
+
+  const { outcome } = await deferredPrompt.userChoice;
+
+  console.log("Resultado:", outcome);
+
+  deferredPrompt = null;
+
+  btnInstall.style.display = "none";
+});
+
+// Quando instalar
+window.addEventListener("appinstalled", () => {
+
+  console.log("PWA instalado");
+
+  btnInstall.style.display = "none";
+});
+
+// Registrar Service Worker
+if ("serviceWorker" in navigator) {
+
+  navigator.serviceWorker.register("./service-worker.js")
+    .then(() => console.log("SW registrado"))
+    .catch((err) => console.log("Erro SW:", err));
+
+}
+</script>
+</body>
+</html>
