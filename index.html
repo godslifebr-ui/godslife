@@ -10,6 +10,71 @@
 <title>God's Life - Rádio</title>
 
 <style>
+/* Botão discreto de compartilhar */
+#btnCompartilhar {
+  position: fixed;
+  bottom: 20px;
+  left: 20px;
+  z-index: 9998;
+
+  display: flex;
+  align-items: center;
+  gap: 8px;
+
+  padding: 10px 14px;
+  border: 1px solid #374151;
+  border-radius: 30px;
+
+  background: rgba(31, 41, 55, 0.92);
+  color: #d1d5db;
+
+  font-size: 13px;
+  font-weight: 500;
+
+  cursor: pointer;
+  box-shadow: 0 3px 10px rgba(0, 0, 0, 0.18);
+  transition: background 0.2s, color 0.2s;
+}
+
+#btnCompartilhar:hover {
+  background: #374151;
+  color: #4ade80;
+}
+
+#btnCompartilhar svg {
+  width: 17px;
+  height: 17px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 2;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+#btnCompartilhar:focus-visible {
+  outline: 2px solid #4ade80;
+  outline-offset: 3px;
+}
+
+/* Telas pequenas */
+@media (max-width: 380px) {
+  #btnCompartilhar {
+    bottom: 14px;
+    left: 10px;
+    padding: 9px 11px;
+    font-size: 12px;
+  }
+
+  #btnInstall {
+    bottom: 14px;
+    right: 10px;
+    padding: 10px 12px;
+    font-size: 13px;
+  }
+}
+</style>
+  
+<style>
 * {
   box-sizing: border-box;
 }
@@ -898,6 +963,47 @@ if ("serviceWorker" in navigator) {
 }
 </script>
 
+<button id="btnCompartilhar" type="button"
+  aria-label="Compartilhar a rádio God's Life">
+  <svg viewBox="0 0 24 24" aria-hidden="true">
+    <circle cx="18" cy="5" r="3"></circle>
+    <circle cx="6" cy="12" r="3"></circle>
+    <circle cx="18" cy="19" r="3"></circle>
+    <path d="m8.7 10.7 6.6-4.4"></path>
+    <path d="m8.7 13.3 6.6 4.4"></path>
+  </svg>
+  Compartilhar rádio
+</button>
+
+<script>
+(function () {
+  const botao = document.getElementById("btnCompartilhar");
+
+  const dados = {
+    title: "God's Life - Rádio",
+    text: "Ouça a God's Life! Uma rádio para abençoar sua vida.",
+    url: "https://godslifebr-ui.github.io/godslife/"
+  };
+
+  botao.addEventListener("click", async function () {
+    try {
+      if (navigator.share) {
+        await navigator.share(dados);
+      } else if (navigator.clipboard &&
+                 window.isSecureContext) {
+        await navigator.clipboard.writeText(dados.url);
+        alert("Link da rádio copiado! Compartilhe com seus amigos.");
+      } else {
+        window.prompt("Copie o link da rádio:", dados.url);
+      }
+    } catch (erro) {
+      if (erro.name !== "AbortError") {
+        window.prompt("Compartilhe o link da rádio:", dados.url);
+      }
+    }
+  });
+})();
+</script>
 </body>
 </html>
   
