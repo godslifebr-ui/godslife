@@ -4,10 +4,13 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="theme-color" content="#111827">
+
   <title>God's life — Minha Rádio</title>
 
   <style>
-    * { box-sizing: border-box; }
+    * {
+      box-sizing: border-box;
+    }
 
     body {
       margin: 0;
@@ -48,6 +51,7 @@
       font-size: 17px;
       font-weight: bold;
       margin: 12px 0;
+      color: #fff;
       overflow-wrap: anywhere;
     }
 
@@ -86,6 +90,11 @@
       cursor: pointer;
     }
 
+    input[type="range"]:disabled {
+      opacity: .5;
+      cursor: default;
+    }
+
     .times {
       display: flex;
       justify-content: space-between;
@@ -109,7 +118,9 @@
       line-height: 1.5;
     }
 
-    .error { color: #fca5a5; }
+    .error {
+      color: #fca5a5;
+    }
   </style>
 </head>
 
@@ -126,6 +137,7 @@
     <h1>God's life</h1>
 
     <div id="titulo-musica">Minha Rádio</div>
+
     <div id="relogio-brasilia">--:--:--</div>
 
     <audio id="audio" preload="auto"></audio>
@@ -146,7 +158,7 @@
       min="0"
       max="100"
       value="0"
-      aria-label="Progresso"
+      aria-label="Progresso da música"
       disabled
     >
 
@@ -167,12 +179,16 @@
       >
     </div>
 
-    <div id="status" class="status">Carregando rádio...</div>
+    <div id="status" class="status">
+      Carregando rádio...
+    </div>
+
   </main>
 
   <script>
     "use strict";
 
+    // Endereço original da lista de músicas.
     const JSON_URL =
       "https://raw.githubusercontent.com/Isac-Arqueiro/mylist/refs/heads/main/musicas.json";
 
@@ -193,30 +209,16 @@
     let fila = [];
     let indice = 0;
 
-    let reproduzindo = false;
-    let desejaReproduzir = false;
     let buscando = false;
     let tempoPendente = 0;
+    let reproduzindo = false;
+    let desejaReproduzir = false;
 
-    // Controle da música que está efetivamente tocando.
-    let idFaixaAtual = null;
-    let tocandoAgendada = false;
-
-    // Faixas agendadas aguardando sua vez.
-    let agendadasPendentes = [];
-
-    // Impede que o mesmo horário seja adicionado várias vezes no dia.
-    let agendamentosProcessados = new Set();
-    let dataBrasiliaAnterior = "";
-    let minutoBrasiliaAnterior = 0;
-
-    // Controle de eventos duplicados.
-    let eventoFaixaResolvido = true;
+    // Controla trocas duplicadas e operações antigas.
+    let versaoFaixa = 0;
+    let ultimaVersaoAvancada = -1;
     let operacaoReproducao = 0;
-
-    // Após uma faixa normal terminar, ela precisa ser avançada.
-    // Se houver faixa agendada, o avanço normal espera por ela.
-    let normalPrecisaAvancar = false;
+    let erroEmTratamento = false;
 
     function mensagem(texto, erro = false) {
       status.textContent = texto;
@@ -231,7 +233,8 @@
       const n = Math.floor(segundos);
 
       return String(Math.floor(n / 60)).padStart(2, "0") +
-        ":" + String(n % 60).padStart(2, "0");
+        ":" +
+        String(n % 60).padStart(2, "0");
     }
 
     function embaralhar(lista) {
@@ -247,46 +250,13 @@
       return resultado;
     }
 
-    // Obtém data e hora usando o fuso oficial de Brasília.
-    function horarioBrasilia() {
-      const partes = new Intl.DateTimeFormat("en-GB", {
-        timeZone: "America/Sao_Paulo",
-        year: "numeric",
-        month: "2-digit",
-        day: "2-digit",
-        hour: "2-digit",
-        minute: "2-digit",
-        second: "2-digit",
-        hourCycle: "h23"
-      }).formatToParts(new Date());
-
-      const p = {};
-
-      for (const parte of partes) {
-        if (parte.type !== "literal") {
-          p[parte.type] = parte.value;
-        }
-      }
-
-      return {
-        data: `${p.year}-${p.month}-${p.day}`,
-        hora: `${p.hour}:${p.minute}`,
-        minuto: Number(p.hour) * 60 + Number(p.minute),
-        texto: `${p.hour}:${p.minute}:${p.second}`
-      };
-    }
-
-    function atualizarRelogio() {
-      relogioBrasilia.textContent = horarioBrasilia().texto;
-    }
-
     function urlDeAudio(url) {
       try {
         const u = new URL(url);
         const host = u.hostname.toLowerCase();
         const caminho = u.pathname.toLowerCase();
 
-        // Rejeita páginas do YouTube.
+        // Não aceita links de páginas do YouTube.
         if (
           host === "youtu.be" ||
           host === "youtube.com" ||
@@ -304,10 +274,13 @@
         ) {
           let id = u.searchParams.get("id");
           const partes = caminho.split("/");
-          const i = partes.findIndex(p => p === "d");
 
-          if (!id && i >= 0) {
-            id = partes[i + 1];
+          if (!id) {
+            const i = partes.findIndex(p => p === "d");
+
+            if (i >= 0) {
+              id = partes[i + 1];
+            }
           }
 
           if (!id) return null;
@@ -316,25 +289,28 @@
             encodeURIComponent(id);
         }
 
+        // Aceita arquivos de áudio conhecidos.
+        if (
+          /\.(mp3|m4a|aac|ogg|oga|opus|wav|flac|webm)$/.test(caminho)
+        ) {
+          return u.href;
+        }
+
+        // Outros links serão testados pelo navegador.
         return u.href;
+
       } catch (_) {
         return null;
       }
     }
 
-    function faixaDaFila() {
+    function faixaAtual() {
       return musicas.find(m => m.id === fila[indice]) || null;
     }
 
-    function faixaPorId(id) {
-      return musicas.find(m => String(m.id) === String(id)) || null;
-    }
-
-    function faixaVisivel() {
-      return faixaPorId(idFaixaAtual) || faixaDaFila();
-    }
-
     function salvar() {
+      if (!fila.length) return;
+
       try {
         localStorage.setItem(STORAGE_KEY, JSON.stringify({
           fila,
@@ -352,21 +328,25 @@
         salvo = JSON.parse(localStorage.getItem(STORAGE_KEY));
       } catch (_) {}
 
-      const ids = new Set(musicas.map(m => String(m.id)));
+      const ids = new Set(musicas.map(m => m.id));
 
       if (
         salvo &&
         Array.isArray(salvo.fila) &&
         salvo.fila.length === musicas.length &&
-        salvo.fila.every(id => ids.has(String(id))) &&
-        new Set(salvo.fila.map(String)).size === musicas.length &&
+        salvo.fila.every(id => ids.has(id)) &&
+        new Set(salvo.fila).size === musicas.length &&
         Number.isInteger(salvo.indice) &&
         salvo.indice >= 0 &&
         salvo.indice < salvo.fila.length
       ) {
         fila = salvo.fila;
         indice = salvo.indice;
-        tempoPendente = Math.max(0, Number(salvo.tempo) || 0);
+
+        tempoPendente = Math.max(
+          0,
+          Number(salvo.tempo) || 0
+        );
 
         if (salvo.volume != null) {
           volume.value = Math.max(
@@ -379,7 +359,7 @@
       }
 
       const primeira = config.tocarPrimeiro
-        ? musicas.find(m => String(m.id) === String(config.tocarPrimeiro))
+        ? musicas.find(m => m.id === config.tocarPrimeiro)
         : null;
 
       fila = [
@@ -391,26 +371,6 @@
 
       indice = 0;
       tempoPendente = 0;
-    }
-
-    function atualizarTituloMusica() {
-      const faixa = faixaVisivel();
-
-      tituloMusica.textContent =
-        faixa && faixa.titulo ? faixa.titulo : "Minha Rádio";
-
-      if ("mediaSession" in navigator && "MediaMetadata" in window) {
-        navigator.mediaSession.metadata = new MediaMetadata({
-          title: faixa?.titulo || "God's life",
-          artist: faixa?.artista || "God's life",
-          album: "Minha Rádio",
-          artwork: [{
-            src: "https://i.imgur.com/ZRHzLQK.jpeg",
-            sizes: "192x192",
-            type: "image/jpeg"
-          }]
-        });
-      }
     }
 
     function atualizarBotao() {
@@ -427,154 +387,122 @@
       }
     }
 
+    function atualizarTituloMusica() {
+      const faixa = faixaAtual();
+
+      tituloMusica.textContent =
+        faixa && faixa.titulo
+          ? faixa.titulo
+          : "Minha Rádio";
+
+      if ("mediaSession" in navigator && "MediaMetadata" in window) {
+        navigator.mediaSession.metadata = new MediaMetadata({
+          title: faixa?.titulo || "God's life",
+          artist: "God's life",
+          album: "Minha Rádio",
+          artwork: [
+            {
+              src: "https://i.imgur.com/ZRHzLQK.jpeg",
+              sizes: "192x192",
+              type: "image/jpeg"
+            }
+          ]
+        });
+      }
+    }
+
+    function atualizarRelogio() {
+      relogioBrasilia.textContent =
+        new Intl.DateTimeFormat("pt-BR", {
+          timeZone: "America/Sao_Paulo",
+          hour: "2-digit",
+          minute: "2-digit",
+          second: "2-digit",
+          hour12: false
+        }).format(new Date());
+    }
+
     function registrarControlesDeMidia() {
       if (!("mediaSession" in navigator)) return;
 
       try {
-        navigator.mediaSession.setActionHandler("play", tocar);
-        navigator.mediaSession.setActionHandler("pause", pausar);
-        navigator.mediaSession.setActionHandler("nexttrack", proximaManual);
-        navigator.mediaSession.setActionHandler("previoustrack", anterior);
+        navigator.mediaSession.setActionHandler("play", () => {
+          tocar();
+        });
+
+        navigator.mediaSession.setActionHandler("pause", () => {
+          pausar();
+        });
+
+        navigator.mediaSession.setActionHandler("nexttrack", () => {
+          desejaReproduzir = true;
+          proxima();
+        });
+
+        navigator.mediaSession.setActionHandler("previoustrack", () => {
+          anterior();
+        });
       } catch (_) {}
     }
 
-    // Verifica se algum horário programado acabou de chegar.
-    function verificarHorarios() {
-      if (!musicas.length) return;
-
-      const agora = horarioBrasilia();
-
-      // Reinicia a referência quando muda o dia em Brasília.
-      if (agora.data !== dataBrasiliaAnterior) {
-        dataBrasiliaAnterior = agora.data;
-        minutoBrasiliaAnterior = agora.minuto;
-        agendamentosProcessados.clear();
-        return;
-      }
-
-      // A comparação detecta a passagem do horário mesmo que
-      // o temporizador tenha sido executado alguns minutos depois.
-      for (const faixa of musicas) {
-        if (!faixa.horario) continue;
-
-        const correspondencia =
-          /^([01]\d|2[0-3]):([0-5]\d)$/.exec(
-            String(faixa.horario).trim()
-          );
-
-        if (!correspondencia) {
-          console.warn(
-            "Horário inválido na faixa:",
-            faixa.titulo,
-            faixa.horario
-          );
-          continue;
-        }
-
-        const horaAlvo = Number(correspondencia[1]) * 60 +
-          Number(correspondencia[2]);
-
-        const chave = `${agora.data}|${faixa.id}|${faixa.horario}`;
-
-        const chegouAoHorario =
-          minutoBrasiliaAnterior < horaAlvo &&
-          agora.minuto >= horaAlvo;
-
-        if (
-          chegouAoHorario &&
-          !agendamentosProcessados.has(chave)
-        ) {
-          agendamentosProcessados.add(chave);
-
-          // Não interrompe a música atual.
-          agendadasPendentes.push(faixa.id);
-
-          mensagem(
-            `Programada: ${faixa.titulo}. Tocará após a música atual.`
-          );
-
-          console.log(
-            "Faixa programada adicionada à fila:",
-            faixa.titulo,
-            agora.texto
-          );
-        }
-      }
-
-      minutoBrasiliaAnterior = agora.minuto;
-    }
-
-    // Inicia uma faixa específica, normal ou programada.
-    async function reproduzirFaixa(id, agendada = false) {
-      const faixa = faixaPorId(id);
+    async function tocar() {
+      const faixa = faixaAtual();
 
       if (!faixa) {
-        mensagem("A faixa selecionada não foi encontrada.", true);
+        mensagem("Nenhuma música disponível.", true);
         return;
       }
 
       desejaReproduzir = true;
-      tocandoAgendada = agendada;
 
       const minhaOperacao = ++operacaoReproducao;
 
-      if (String(idFaixaAtual) !== String(faixa.id)) {
-        audio.pause();
-
-        idFaixaAtual = faixa.id;
-        eventoFaixaResolvido = false;
-
-        audio.src = faixa.audioUrl;
-        audio.load();
-
-        elapsed.textContent = "00:00";
-        duration.textContent = "00:00";
-        progress.value = 0;
-
-        atualizarTituloMusica();
-      }
-
       try {
-        mensagem(
-          agendada
-            ? `Iniciando programação: ${faixa.titulo}`
-            : `Carregando: ${faixa.titulo}`
-        );
+        if (audio.dataset.faixa !== String(faixa.id)) {
+          audio.pause();
+
+          versaoFaixa++;
+          erroEmTratamento = false;
+
+          audio.dataset.faixa = String(faixa.id);
+          audio.src = faixa.audioUrl;
+
+          elapsed.textContent = "00:00";
+          duration.textContent = "00:00";
+          progress.value = 0;
+
+          audio.load();
+
+          atualizarTituloMusica();
+        }
+
+        mensagem("Preparando reprodução...");
 
         await audio.play();
 
+        // Ignora o resultado de uma tentativa que ficou para trás.
         if (minhaOperacao !== operacaoReproducao) return;
 
         reproduzindo = true;
         atualizarBotao();
-        atualizarTituloMusica();
-        mensagem(agendada ? `Programada: ${faixa.titulo}` : "Reproduzindo");
+        mensagem("Reproduzindo");
         salvar();
 
-      } catch (erro) {
+      } catch (e) {
         if (minhaOperacao !== operacaoReproducao) return;
-
-        console.error("Erro ao reproduzir:", faixa.titulo, erro);
 
         reproduzindo = false;
         atualizarBotao();
 
-        mensagem("Erro ao tocar a faixa. Tentando continuar...", true);
+        console.warn("Falha ao reproduzir áudio:", e);
 
-        resolverFimDaFaixa();
+        mensagem(
+          "Falha ao tocar esta música. Tentando a próxima...",
+          true
+        );
+
+        proxima();
       }
-    }
-
-    function tocar() {
-      desejaReproduzir = true;
-
-      const id = idFaixaAtual != null
-        ? idFaixaAtual
-        : faixaDaFila()?.id;
-
-      if (id == null) return;
-
-      reproduzirFaixa(id, tocandoAgendada);
     }
 
     function pausar() {
@@ -586,17 +514,25 @@
       reproduzindo = false;
       atualizarBotao();
       mensagem("Pausado");
+
       salvar();
     }
 
-    // Avança a fila normal sem repetir a faixa anterior
-    // imediatamente no começo de uma nova rodada.
-    function avancarFilaNormal() {
-      const faixaAnterior = faixaDaFila();
+    function proxima() {
+      if (!fila.length) return;
+
+      // Uma mesma faixa só pode avançar uma vez por carregamento.
+      if (ultimaVersaoAvancada === versaoFaixa) return;
+
+      ultimaVersaoAvancada = versaoFaixa;
+
+      const faixaAnterior = faixaAtual();
 
       indice++;
 
       if (indice >= fila.length) {
+        // Nova rodada embaralhada, evitando repetir imediatamente
+        // a última faixa, quando há outras músicas disponíveis.
         const outras = embaralhar(
           musicas.filter(m =>
             !faixaAnterior || m.id !== faixaAnterior.id
@@ -611,112 +547,71 @@
         indice = 0;
       }
 
-      const proximaFaixa = faixaDaFila();
+      tempoPendente = 0;
+      operacaoReproducao++;
 
-      if (proximaFaixa) {
-        reproduzirFaixa(proximaFaixa.id, false);
-      }
-    }
+      audio.pause();
+      audio.removeAttribute("src");
+      delete audio.dataset.faixa;
+      audio.load();
 
-    // Uma faixa agendada tem prioridade após o término da atual.
-    function resolverFimDaFaixa() {
-      if (eventoFaixaResolvido) return;
-
-      eventoFaixaResolvido = true;
       reproduzindo = false;
       atualizarBotao();
+      atualizarTituloMusica();
+      salvar();
 
-      if (tocandoAgendada) {
-        // Terminou uma faixa programada.
-        tocandoAgendada = false;
-
-        if (agendadasPendentes.length) {
-          const proximaAgendada = agendadasPendentes.shift();
-          reproduzirFaixa(proximaAgendada, true);
-          return;
-        }
-
-        // Se a música normal já havia terminado, agora avançamos.
-        if (normalPrecisaAvancar) {
-          normalPrecisaAvancar = false;
-          avancarFilaNormal();
-        } else {
-          mensagem("Programação concluída.");
-        }
-
-        return;
+      // A troca é feita imediatamente; não espera um temporizador.
+      if (desejaReproduzir) {
+        tocar();
+      } else {
+        mensagem("Próxima música pronta");
       }
-
-      // Terminou uma faixa da fila normal.
-      normalPrecisaAvancar = true;
-
-      if (agendadasPendentes.length) {
-        const proximaAgendada = agendadasPendentes.shift();
-        reproduzirFaixa(proximaAgendada, true);
-        return;
-      }
-
-      normalPrecisaAvancar = false;
-      avancarFilaNormal();
-    }
-
-    // Próxima manual: permite avançar mesmo com a tela bloqueada,
-    // se o navegador entregar o comando de mídia.
-    function proximaManual() {
-      desejaReproduzir = true;
-
-      // Uma faixa programada pendente tem prioridade.
-      if (agendadasPendentes.length) {
-        const id = agendadasPendentes.shift();
-        eventoFaixaResolvido = true;
-        normalPrecisaAvancar = false;
-        reproduzirFaixa(id, true);
-        return;
-      }
-
-      // Se a faixa atual é programada, o avanço manual
-      // retoma a fila normal.
-      if (tocandoAgendada) {
-        tocandoAgendada = false;
-
-        if (normalPrecisaAvancar) {
-          normalPrecisaAvancar = false;
-          avancarFilaNormal();
-        } else {
-          avancarFilaNormal();
-        }
-
-        return;
-      }
-
-      eventoFaixaResolvido = true;
-      normalPrecisaAvancar = false;
-      avancarFilaNormal();
     }
 
     function anterior() {
-      desejaReproduzir = true;
+      if (!fila.length) return;
+
       operacaoReproducao++;
 
-      if (tocandoAgendada) {
-        tocandoAgendada = false;
-      }
-
       indice = (indice - 1 + fila.length) % fila.length;
-      normalPrecisaAvancar = false;
+      tempoPendente = 0;
 
-      const faixa = faixaDaFila();
+      // Permite tocar novamente uma faixa já visitada.
+      ultimaVersaoAvancada = -1;
 
-      if (faixa) {
-        reproduzirFaixa(faixa.id, false);
+      audio.pause();
+      audio.removeAttribute("src");
+      delete audio.dataset.faixa;
+      audio.load();
+
+      reproduzindo = false;
+      atualizarBotao();
+      atualizarTituloMusica();
+      salvar();
+
+      if (desejaReproduzir) {
+        tocar();
+      } else {
+        mensagem("Faixa anterior pronta");
       }
     }
 
-    playBtn.addEventListener("click", () => {
-      if (reproduzindo || !audio.paused) {
-        pausar();
-      } else {
-        tocar();
+    // Aplica o ponto salvo assim que os metadados estiverem disponíveis.
+    audio.addEventListener("loadedmetadata", () => {
+      duration.textContent = tempo(audio.duration);
+      progress.disabled = !Number.isFinite(audio.duration);
+
+      if (tempoPendente > 0 && Number.isFinite(audio.duration)) {
+        const ponto = Math.min(
+          tempoPendente,
+          Math.max(0, audio.duration - 0.5)
+        );
+
+        try {
+          audio.currentTime = ponto;
+        } catch (_) {}
+
+        tempoPendente = 0;
       }
     });
 
@@ -737,29 +632,25 @@
       salvar();
     });
 
-    audio.addEventListener("ended", resolverFimDaFaixa);
-
-    audio.addEventListener("error", () => {
-      if (!idFaixaAtual || eventoFaixaResolvido) return;
-
-      mensagem("Erro no áudio. Tentando continuar...", true);
-      resolverFimDaFaixa();
+    audio.addEventListener("ended", () => {
+      // O navegador informa que a faixa terminou.
+      // A proteção impede dois avanços para a mesma faixa.
+      if (audio.ended) {
+        proxima();
+      }
     });
 
-    audio.addEventListener("loadedmetadata", () => {
-      duration.textContent = tempo(audio.duration);
-      progress.disabled = !Number.isFinite(audio.duration);
+    audio.addEventListener("error", () => {
+      if (!audio.dataset.faixa || erroEmTratamento) return;
 
-      if (tempoPendente > 0 && Number.isFinite(audio.duration)) {
-        try {
-          audio.currentTime = Math.min(
-            tempoPendente,
-            Math.max(0, audio.duration - 0.5)
-          );
-        } catch (_) {}
+      erroEmTratamento = true;
 
-        tempoPendente = 0;
-      }
+      mensagem(
+        "Erro nesta música. Tentando a próxima...",
+        true
+      );
+
+      proxima();
     });
 
     audio.addEventListener("timeupdate", () => {
@@ -776,9 +667,23 @@
       }
     });
 
+    audio.addEventListener("durationchange", () => {
+      if (Number.isFinite(audio.duration)) {
+        duration.textContent = tempo(audio.duration);
+      }
+    });
+
     audio.addEventListener("waiting", () => {
       if (!audio.paused) {
         mensagem("Carregando áudio...");
+      }
+    });
+
+    playBtn.addEventListener("click", () => {
+      if (reproduzindo || !audio.paused) {
+        pausar();
+      } else {
+        tocar();
       }
     });
 
@@ -787,7 +692,10 @@
     });
 
     progress.addEventListener("change", () => {
-      if (Number.isFinite(audio.duration) && audio.duration > 0) {
+      if (
+        Number.isFinite(audio.duration) &&
+        audio.duration > 0
+      ) {
         audio.currentTime =
           (Number(progress.value) / 100) * audio.duration;
       }
@@ -801,16 +709,23 @@
       salvar();
     });
 
-    // Quando o navegador volta a executar a página, verificamos
-    // se algum horário foi alcançado durante a suspensão.
+    // Recupera a sequência quando a página volta a executar.
     document.addEventListener("visibilitychange", () => {
-      if (!document.hidden) {
-        verificarHorarios();
+      if (!document.hidden && desejaReproduzir && audio.ended) {
+        proxima();
       }
     });
 
-    window.addEventListener("pageshow", verificarHorarios);
+    window.addEventListener("pageshow", () => {
+      if (desejaReproduzir && audio.ended) {
+        proxima();
+      }
+    });
+
     window.addEventListener("pagehide", salvar);
+
+    // Persiste o progresso quando o navegador permite executar o timer.
+    setInterval(salvar, 5000);
 
     async function iniciar() {
       try {
@@ -841,7 +756,9 @@
           .filter(m => m.audioUrl);
 
         if (!musicas.length) {
-          throw new Error("O JSON não contém áudios compatíveis.");
+          throw new Error(
+            "O JSON não contém links de áudio compatíveis."
+          );
         }
 
         prepararFila();
@@ -850,39 +767,28 @@
 
         playBtn.disabled = false;
 
-        // Inicializa a referência horária sem disparar músicas
-        // de horários que passaram antes de abrir o site.
-        const agora = horarioBrasilia();
-
-        dataBrasiliaAnterior = agora.data;
-        minutoBrasiliaAnterior = agora.minuto;
-
-        atualizarRelogio();
         atualizarTituloMusica();
-        atualizarBotao();
         registrarControlesDeMidia();
 
         mensagem("Rádio pronta. Aperte o botão para tocar.");
 
-      } catch (erro) {
-        console.error("Erro ao iniciar rádio:", erro);
+      } catch (e) {
+        console.error("Erro ao iniciar a rádio:", e);
 
         playBtn.disabled = true;
 
         mensagem(
-          "Erro ao carregar a rádio. Verifique o JSON e a conexão.",
+          "Erro ao carregar a rádio. Verifique a conexão e o JSON.",
           true
         );
       }
     }
 
-    // Verifica a programação periodicamente enquanto o navegador
-    // permite que o JavaScript seja executado.
-    setInterval(verificarHorarios, 1000);
-    setInterval(atualizarRelogio, 1000);
-    setInterval(salvar, 5000);
+    volume.addEventListener("change", salvar);
 
     atualizarRelogio();
+    setInterval(atualizarRelogio, 1000);
+
     iniciar();
   </script>
 </body>
