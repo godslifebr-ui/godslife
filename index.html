@@ -632,13 +632,34 @@
       salvar();
     });
 
-    audio.addEventListener("ended", () => {
-      // O navegador informa que a faixa terminou.
-      // A proteção impede dois avanços para a mesma faixa.
-      if (audio.ended) {
-        proxima();
-      }
-    });
+    
+audio.addEventListener("ended", () => {
+  console.log("A música terminou.");
+
+  proxima();
+});
+
+// Verifica se o áudio terminou enquanto a página
+// estava suspensa e retoma a fila quando possível.
+function verificarFimDaMusica() {
+  if (
+    desejaReproduzir &&
+    audio.ended &&
+    audio.paused
+  ) {
+    proxima();
+  }
+}
+
+document.addEventListener("visibilitychange", () => {
+  if (!document.hidden) {
+    verificarFimDaMusica();
+  }
+});
+
+window.addEventListener("focus", verificarFimDaMusica);
+window.addEventListener("pageshow", verificarFimDaMusica);
+
 
     audio.addEventListener("error", () => {
       if (!audio.dataset.faixa || erroEmTratamento) return;
