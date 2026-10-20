@@ -1,7 +1,7 @@
 <!DOCTYPE html>
 <html lang="pt-BR">
 <head>
-<link rel="manifest" href="./manifest.json">
+<link rel="manifest" href="https://godslifebr-ui.github.io/godslife/manifest.json">
 <meta name="theme-color" content="#000000">
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
@@ -197,6 +197,12 @@
     const STORAGE_KEY = "radio-audio-only-v1";
 
     const audio = document.getElementById("audio");
+
+    // Carrega a próxima faixa em segundo plano para tentar reduzir a espera.
+    // O navegador/servidor pode limitar o pré-carregamento em dados móveis.
+    const audioReserva = new Audio();
+    audioReserva.preload = "auto";
+    let idFaixaReservada = null;
     const playBtn = document.getElementById("play");
     const progress = document.getElementById("progress");
     const volume = document.getElementById("volume");
@@ -221,6 +227,36 @@
     let ultimaVersaoAvancada = -1;
     let operacaoReproducao = 0;
     let erroEmTratamento = false;
+
+    // Mantém a tela ligada enquanto esta página da rádio estiver visível.
+    let bloqueioTela = null;
+
+    async function manterTelaLigada() {
+      if (!("wakeLock" in navigator) || document.visibilityState !== "visible") {
+        return;
+      }
+
+      try {
+        if (!bloqueioTela || bloqueioTela.released) {
+          bloqueioTela = await navigator.wakeLock.request("screen");
+          bloqueioTela.addEventListener("release", () => {
+            bloqueioTela = null;
+          });
+        }
+      } catch (erro) {
+        // Alguns aparelhos/navegadores podem impedir o bloqueio de tela.
+        console.log("Não foi possível manter a tela ligada:", erro);
+      }
+    }
+
+    document.addEventListener("visibilitychange", () => {
+      if (document.visibilityState === "visible") {
+        manterTelaLigada();
+      }
+    });
+
+    window.addEventListener("pageshow", manterTelaLigada);
+
 
     function mensagem(texto, erro = false) {
       status.textContent = texto;
@@ -308,6 +344,34 @@
 
     function faixaAtual() {
       return musicas.find(m => m.id === fila[indice]) || null;
+    }
+
+    function prepararProximaFaixa() {
+      // Não inicia outro download antes de a faixa atual ter algum áudio
+      // guardado no buffer. Isso ajuda a evitar competir com a música atual.
+      if (audio.paused || !fila.length || indice + 1 >= fila.length) return;
+
+      let segundosEmBuffer = 0;
+      try {
+        for (let i = 0; i < audio.buffered.length; i++) {
+          if (audio.buffered.start(i) <= audio.currentTime &&
+              audio.buffered.end(i) >= audio.currentTime) {
+            segundosEmBuffer = audio.buffered.end(i) - audio.currentTime;
+            break;
+          }
+        }
+      } catch (_) {}
+
+      if (segundosEmBuffer < 12) return;
+
+      const proximaId = fila[indice + 1];
+      const proximaFaixa = musicas.find(m => m.id === proximaId);
+      if (!proximaFaixa || !proximaFaixa.audioUrl) return;
+      if (idFaixaReservada === String(proximaFaixa.id)) return;
+
+      idFaixaReservada = String(proximaFaixa.id);
+      audioReserva.src = proximaFaixa.audioUrl;
+      try { audioReserva.load(); } catch (_) {}
     }
 
     function salvar() {
@@ -626,6 +690,7 @@
       reproduzindo = true;
       atualizarBotao();
       mensagem("Reproduzindo");
+      prepararProximaFaixa();
     });
 
     audio.addEventListener("pause", () => {
@@ -656,6 +721,7 @@
     });
 
     audio.addEventListener("timeupdate", () => {
+      prepararProximaFaixa();
       elapsed.textContent = tempo(audio.currentTime);
       duration.textContent = tempo(audio.duration);
 
@@ -682,6 +748,8 @@
     });
 
     playBtn.addEventListener("click", () => {
+      manterTelaLigada();
+
       if (reproduzindo || !audio.paused) {
         pausar();
       } else {
@@ -791,6 +859,7 @@
     atualizarRelogio();
     setInterval(atualizarRelogio, 1000);
 
+    manterTelaLigada();
     iniciar();
   </script>
 
